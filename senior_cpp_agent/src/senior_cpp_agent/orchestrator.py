@@ -9,6 +9,7 @@ from langchain_core.messages import HumanMessage
 from .config import AgentSettings
 from .cpp_pipeline import CppPipeline, CppPipelineResult
 from .llm_registry import ChatModelFactory
+from .runtime import RuntimeContext, sanitize_payload
 from .tools import build_tools
 
 
@@ -35,6 +36,10 @@ class AgentResult:
     gate_result: GateResult
     repair_cycles_used: int
     pipeline_result: CppPipelineResult
+    request_id: str
+    run_id: str
+    run_dir: str
+    metrics: dict
 
 
 ROLE_PROMPTS = {
@@ -77,20 +82,28 @@ ROLE_PROMPTS = {
 
 
 class SeniorCppAgent:
-    def __init__(self, settings: AgentSettings):
+    def __init__(self, settings: AgentSettings, runtime: RuntimeContext | None = None):
         self.settings = settings
+        self.runtime = runtime or RuntimeContext(workspace=settings.workspace)
+        self.log = self.runtime.logger()
         self.tools = build_tools(settings.workspace, settings.command_timeout_sec)
-        self.model_factory = ChatModelFactory(settings)
+        self.model_factory = ChatModelFactory(settings, runtime=self.runtime)
         self.pipeline = CppPipeline(settings.workspace, settings.command_timeout_sec, profiles=settings.cpp_profiles)
 
     def _invoke_role(self, role: str, user_input: str) -> str:
+        self.runtime.recorder.write_text(f"{role}_prompt.txt", user_input)
+        self.log.info("Invoking role", extra={"event": "role_start", "role": role})
         output = self.model_factory.invoke_role(
             role=role,
             prompt=ROLE_PROMPTS[role],
             tools=self.tools,
             messages=[HumanMessage(content=user_input)],
         )
-        return output["messages"][-1].content
+        content = output["messages"][-1].content
+        self.runtime.recorder.write_text(f"{role}_decision.txt", str(content))
+        self.runtime.add_decision(stage=role, decision=str(content)[:300], success=True)
+        self.log.info("Role completed", extra={"event": "role_complete", "role": role})
+        return content
 
     def _parse_validation_result(self, validator_output: str) -> ValidationResult:
         try:
@@ -162,7 +175,33 @@ class SeniorCppAgent:
 
         return review_report, validation_report, validation_result
 
+    def create_run_report(self, result: AgentResult) -> dict:
+        return sanitize_payload(
+            {
+                "request_id": result.request_id,
+                "run_id": result.run_id,
+                "run_dir": result.run_dir,
+                "architect_plan": result.architect_plan,
+                "implementation_log": result.implementation_log,
+                "review_report": result.review_report,
+                "validation_report": result.validation_report,
+                "validation_result": {
+                    "passed": result.validation_result.passed,
+                    "failed_checks": result.validation_result.failed_checks,
+                    "recommendations": result.validation_result.recommendations,
+                },
+                "pipeline_result": result.pipeline_result.to_dict(),
+                "gate": {
+                    "merge_ready": result.gate_result.merge_ready,
+                    "reasons": result.gate_result.reasons,
+                },
+                "repair_cycles_used": result.repair_cycles_used,
+                "metrics": result.metrics,
+            }
+        )
+
     def run(self, task: str, profile: str = "debug") -> AgentResult:
+        self.log.info("Starting run", extra={"event": "run_start", "profile": profile})
         architect_plan = self._invoke_role("architect", task)
 
         implementer_input = (
@@ -172,6 +211,7 @@ class SeniorCppAgent:
         implementation_log = self._invoke_role("implementer", implementer_input)
 
         pipeline_result = self.pipeline.run(profile)
+        self.runtime.recorder.write_json("pipeline_result.json", sanitize_payload(pipeline_result.to_dict()))
 
         review_report, validation_report, validation_result = self._run_reviewer_and_validator(
             task=task,
@@ -195,6 +235,7 @@ class SeniorCppAgent:
             )
             implementation_log = self._invoke_role("implementer", repair_input)
             pipeline_result = self.pipeline.run(profile)
+            self.runtime.recorder.write_json("pipeline_result.json", sanitize_payload(pipeline_result.to_dict()))
             review_report, validation_report, validation_result = self._run_reviewer_and_validator(
                 task=task,
                 architect_plan=architect_plan,
@@ -203,6 +244,10 @@ class SeniorCppAgent:
             )
 
         gate_result = self._evaluate_gate(validation_result)
+        self.runtime.add_decision(stage="gate", decision="merge_ready" if gate_result.merge_ready else "blocked", success=gate_result.merge_ready)
+        snapshot = self.runtime.artifacts_snapshot()
+        self.runtime.recorder.write_json("run_summary.json", snapshot)
+        self.log.info("Run completed", extra={"event": "run_complete", "merge_ready": gate_result.merge_ready})
 
         return AgentResult(
             architect_plan=architect_plan,
@@ -213,4 +258,8 @@ class SeniorCppAgent:
             gate_result=gate_result,
             repair_cycles_used=repair_cycles_used,
             pipeline_result=pipeline_result,
+            request_id=self.runtime.request_id,
+            run_id=self.runtime.run_id,
+            run_dir=str(self.runtime.recorder.run_dir),
+            metrics=snapshot["metrics"],
         )
