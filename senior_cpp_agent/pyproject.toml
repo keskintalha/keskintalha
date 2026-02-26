@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "senior-cpp-agent"
+version = "0.1.0"
+description = "Industry-ready multi-LLM C++ engineering agent built with LangChain"
+readme = "README.md"
+authors = [{ name = "Your Team" }]
+requires-python = ">=3.11"
+dependencies = [
+  "langchain>=0.3.27",
+  "langchain-core>=0.3.74",
+  "langchain-openai>=0.3.32",
+  "langchain-community>=0.3.27",
+  "langgraph>=0.6.6",
+  "typer>=0.12.5",
+  "rich>=13.8",
+  "python-dotenv>=1.0.1"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+  "pytest-cov>=5.0",
+  "ruff>=0.6.8",
+]
+
+[project.scripts]
+cpp-agent = "senior_cpp_agent.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"
