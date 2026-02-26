@@ -9,7 +9,8 @@ from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
 
-from .config import AgentSettings
+from .config import AgentSettings, parse_role_routing_from_env
+from .llm_registry import ChatModelFactory
 from .orchestrator import SeniorCppAgent
 from .tools import SAFE_COMMAND_PREFIXES
 
@@ -19,13 +20,14 @@ console = Console()
 
 def _load_settings(workspace: Path) -> AgentSettings:
     load_dotenv()
+    default_timeout = int(os.getenv("LLM_TIMEOUT_SEC", "60"))
     return AgentSettings(
         workspace=workspace,
-        architect_model=os.getenv("ARCHITECT_MODEL", "gpt-4.1"),
-        implementer_model=os.getenv("IMPLEMENTER_MODEL", "gpt-4.1"),
-        reviewer_model=os.getenv("REVIEWER_MODEL", "gpt-4.1-mini"),
-        validator_model=os.getenv("VALIDATOR_MODEL", "gpt-4.1-mini"),
+        role_routing=parse_role_routing_from_env(default_timeout_sec=default_timeout),
         command_timeout_sec=int(os.getenv("COMMAND_TIMEOUT_SEC", "120")),
+        llm_retry_attempts=int(os.getenv("LLM_RETRY_ATTEMPTS", "2")),
+        openai_api_key=os.getenv("OPENAI_API_KEY"),
+        openai_base_url=os.getenv("OPENAI_BASE_URL"),
     )
 
 
@@ -34,9 +36,19 @@ def run(
     task: str = typer.Argument(..., help="Task for the agent, e.g. add tests for parser.cpp"),
     workspace: Path = typer.Option(Path.cwd(), "--workspace", "-w", help="Project root path"),
     output_json: bool = typer.Option(False, "--json", help="Print result as JSON"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Only resolve config/routing, do not call models"),
+    model_dump: bool = typer.Option(False, "--model-dump", help="Print active role->model routing"),
 ):
     """Run the full 4-LLM workflow (architect -> implementer -> reviewer -> validator)."""
     settings = _load_settings(workspace)
+    routing = ChatModelFactory(settings).describe_routing()
+
+    if model_dump or dry_run:
+        console.print_json(json.dumps({"workspace": str(settings.workspace), "routing": routing}))
+
+    if dry_run:
+        raise typer.Exit(0)
+
     agent = SeniorCppAgent(settings)
     result = agent.run(task)
 
