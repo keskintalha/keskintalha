@@ -12,6 +12,7 @@ SAFE_COMMAND_PREFIXES = {
     "g++",
     "clang",
     "clang++",
+    "clang-tidy",
     "pytest",
     "python",
 }
@@ -48,7 +49,7 @@ def build_tools(workspace: Path, timeout_sec: int):
 
     @tool
     def run_command(command: str) -> str:
-        """Run a safe build/test command in workspace (cmake/ctest/make/ninja/g++/clang++/pytest/python)."""
+        """Run a safe build/test command in workspace (cmake/ctest/make/ninja/g++/clang++/clang-tidy/pytest/python)."""
         if not _is_command_allowed(command):
             return (
                 "Command rejected by policy. Allowed prefixes: "

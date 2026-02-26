@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from .config import AgentSettings, parse_role_routing_from_env
+from .cpp_pipeline import CppPipeline
 from .llm_registry import ChatModelFactory
 from .orchestrator import SeniorCppAgent
 from .tools import SAFE_COMMAND_PREFIXES
@@ -36,6 +37,7 @@ def _load_settings(workspace: Path) -> AgentSettings:
 def run(
     task: str = typer.Argument(..., help="Task for the agent, e.g. add tests for parser.cpp"),
     workspace: Path = typer.Option(Path.cwd(), "--workspace", "-w", help="Project root path"),
+    profile: str = typer.Option("debug", "--profile", help="C++ pipeline profile (debug/release/asan/ubsan)"),
     output_json: bool = typer.Option(False, "--json", help="Print result as JSON"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Only resolve config/routing, do not call models"),
     model_dump: bool = typer.Option(False, "--model-dump", help="Print active role->model routing"),
@@ -51,7 +53,7 @@ def run(
         raise typer.Exit(0)
 
     agent = SeniorCppAgent(settings)
-    result = agent.run(task)
+    result = agent.run(task, profile=profile)
 
     payload = {
         "architect_plan": result.architect_plan,
@@ -63,6 +65,7 @@ def run(
             "failed_checks": result.validation_result.failed_checks,
             "recommendations": result.validation_result.recommendations,
         },
+        "pipeline_result": result.pipeline_result.to_dict(),
         "gate": {
             "merge_ready": result.gate_result.merge_ready,
             "reasons": result.gate_result.reasons,
@@ -78,8 +81,9 @@ def run(
     console.print(Panel(result.implementation_log, title="2) Implementation", border_style="green"))
     console.print(Panel(result.review_report, title="3) Review", border_style="yellow"))
     console.print(Panel(result.validation_report, title="4) Validation", border_style="magenta"))
+    console.print(Panel(json.dumps(result.pipeline_result.to_dict(), indent=2), title="5) C++ Pipeline", border_style="blue"))
 
-    gate_title = "5) Gate Status"
+    gate_title = "6) Gate Status"
     gate_body = [
         f"merge_ready: {result.gate_result.merge_ready}",
         f"repair_cycles_used: {result.repair_cycles_used}",
@@ -88,6 +92,20 @@ def run(
         gate_body.append("reasons:")
         gate_body.extend(f"- {reason}" for reason in result.gate_result.reasons)
     console.print(Panel("\n".join(gate_body), title=gate_title, border_style="red" if not result.gate_result.merge_ready else "blue"))
+
+
+@app.command("validate")
+def validate_cmd(
+    workspace: Path = typer.Option(Path.cwd(), "--workspace", "-w", help="Project root path"),
+    profile: str = typer.Option("debug", "--profile", help="C++ pipeline profile (debug/release/asan/ubsan)"),
+):
+    """Run only the C++ validation pipeline for a profile."""
+    settings = _load_settings(workspace)
+    pipeline = CppPipeline(settings.workspace, settings.command_timeout_sec, profiles=settings.cpp_profiles)
+    result = pipeline.run(profile)
+    console.print_json(json.dumps(result.to_dict()))
+    if not result.passed:
+        raise typer.Exit(1)
 
 
 @app.command("policy")
