@@ -44,6 +44,11 @@ OPENAI_API_KEY=...
 COMMAND_TIMEOUT_SEC=120
 LLM_TIMEOUT_SEC=60
 MAX_REPAIR_CYCLES=1
+
+# Optionales Tracing (LangChain/LangSmith-kompatibel)
+SENIOR_CPP_AGENT_TRACING=true
+LANGSMITH_PROJECT=senior-cpp-agent
+LANGSMITH_API_KEY=...
 ```
 
 Die Agent-Konfiguration enthält C++ Build-Profile:
@@ -59,8 +64,30 @@ Die Agent-Konfiguration enthält C++ Build-Profile:
 cpp-agent policy
 cpp-agent run "Füge Unit Tests für src/parser.cpp hinzu und führe ctest aus" --workspace /path/to/repo
 cpp-agent run "Refactore memory handling in engine.cpp" --workspace . --profile asan --json
+cpp-agent run "Harden CI build" --workspace . --run-report ./artifacts/run-report.json
 cpp-agent validate --workspace . --profile release
 ```
+
+`--run-report <path>` schreibt einen reproduzierbaren JSON-Report mit Request-ID, Run-ID, Metriken, Gate-Status und Pipeline-Ergebnissen.
+
+## Runtime-Observability
+
+- **Strukturiertes Logging (JSON)** pro Lauf mit `request_id` und `run_id`.
+- **Metriken je Rolle**: Tokenverbrauch, Latenz, Fehler und Retries.
+- **Optionales Tracing** per Environment-Flag (`SENIOR_CPP_AGENT_TRACING=true`) und LangSmith-Variablen.
+- **Run-Artefakte** liegen unter `.senior_cpp_agent/runs/<run_id>/` (Prompts, Entscheidungen, Tool-Outputs, Pipeline/Run-Summary).
+
+## Datenschutz & Retention
+
+Run-Artefakte werden datenschutzkonform gespeichert:
+
+- Sensible Felder (z. B. `api_key`, `token`, `secret`, `password`, `authorization`) werden vor Persistierung maskiert (`[REDACTED]`).
+- Standardmäßig bleiben Artefakte lokal im Workspace (`.senior_cpp_agent/runs/`).
+- Empfohlene Retention-Policy: 
+  - Dev-Umgebung: automatische Löschung nach 7–14 Tagen.
+  - CI: nur bei Fehlerfällen archivieren, sonst nach erfolgreichem Lauf löschen.
+  - Produktivnahe Umgebungen: striktes Least-Privilege auf das Run-Verzeichnis und geplantes Purging (z. B. täglicher Cron).
+- Für GDPR/DSGVO: keine personenbezogenen Daten in Prompts/Tool-Outputs einbetten; falls unvermeidbar, vor Verarbeitung pseudonymisieren.
 
 ## Architektur
 

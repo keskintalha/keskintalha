@@ -1,5 +1,7 @@
 import importlib
+import logging
 import sys
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 
@@ -50,11 +52,41 @@ class StubPipeline:
         )
 
 
+class StubRecorder:
+    def __init__(self):
+        self.run_dir = Path("/tmp/test-run")
+
+    def write_json(self, name, payload):
+        return name, payload
+
+    def write_text(self, name, payload):
+        return name, payload
+
+
+class StubRuntime:
+    def __init__(self):
+        self.request_id = "req-1"
+        self.run_id = "run-1"
+        self.recorder = StubRecorder()
+        self.decisions = []
+
+    def logger(self):
+        return logging.LoggerAdapter(logging.getLogger("test"), {"request_id": self.request_id, "run_id": self.run_id})
+
+    def add_decision(self, *, stage: str, decision: str, success: bool):
+        self.decisions.append((stage, decision, success))
+
+    def artifacts_snapshot(self):
+        return {"metrics": {"architect": {"calls": 1}}, "decisions": self.decisions}
+
+
 def _make_agent(max_repair_cycles: int, invoker: StubInvoker) -> SeniorCppAgent:
     agent = SeniorCppAgent.__new__(SeniorCppAgent)
     agent.settings = SimpleNamespace(max_repair_cycles=max_repair_cycles)
     agent._invoke_role = invoker
     agent.pipeline = StubPipeline()
+    agent.runtime = StubRuntime()
+    agent.log = agent.runtime.logger()
     return agent
 
 
@@ -75,6 +107,7 @@ def test_orchestrator_gate_pass_without_repair():
     assert result.gate_result.merge_ready is True
     assert result.gate_result.reasons == []
     assert result.repair_cycles_used == 0
+    assert result.request_id == "req-1"
 
 
 def test_orchestrator_gate_fail_on_build_and_tests():
@@ -138,3 +171,25 @@ def test_orchestrator_uses_selected_pipeline_profile():
     agent.run("task", profile="asan")
 
     assert agent.pipeline.calls == ["asan"]
+
+
+def test_create_run_report_redacts_sensitive_data():
+    agent = SeniorCppAgent.__new__(SeniorCppAgent)
+    result = SimpleNamespace(
+        request_id="req",
+        run_id="run",
+        run_dir="/tmp/run",
+        architect_plan="plan",
+        implementation_log="impl",
+        review_report="review",
+        validation_report="report",
+        validation_result=SimpleNamespace(passed=True, failed_checks=[], recommendations=[]),
+        pipeline_result=SimpleNamespace(to_dict=lambda: {"api_key": "secret"}),
+        gate_result=SimpleNamespace(merge_ready=True, reasons=[]),
+        repair_cycles_used=0,
+        metrics={},
+    )
+
+    report = agent.create_run_report(result)
+
+    assert report["pipeline_result"]["api_key"] == "[REDACTED]"

@@ -13,6 +13,7 @@ from .config import AgentSettings, parse_role_routing_from_env
 from .cpp_pipeline import CppPipeline
 from .llm_registry import ChatModelFactory
 from .orchestrator import SeniorCppAgent
+from .runtime import RuntimeContext, tracing_enabled_from_env
 from .tools import SAFE_COMMAND_PREFIXES
 
 app = typer.Typer(help="Senior C++ multi-LLM agent (LangChain)")
@@ -30,7 +31,18 @@ def _load_settings(workspace: Path) -> AgentSettings:
         max_repair_cycles=int(os.getenv("MAX_REPAIR_CYCLES", "0")),
         openai_api_key=os.getenv("OPENAI_API_KEY"),
         openai_base_url=os.getenv("OPENAI_BASE_URL"),
+        tracing_enabled=tracing_enabled_from_env(),
+        tracing_project=os.getenv("LANGSMITH_PROJECT"),
     )
+
+
+def _configure_tracing(settings: AgentSettings) -> None:
+    if not settings.tracing_enabled:
+        return
+    os.environ.setdefault("LANGSMITH_TRACING", "true")
+    os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
+    if settings.tracing_project:
+        os.environ.setdefault("LANGSMITH_PROJECT", settings.tracing_project)
 
 
 @app.command()
@@ -41,37 +53,45 @@ def run(
     output_json: bool = typer.Option(False, "--json", help="Print result as JSON"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Only resolve config/routing, do not call models"),
     model_dump: bool = typer.Option(False, "--model-dump", help="Print active role->model routing"),
+    run_report: Path | None = typer.Option(None, "--run-report", help="Write reproducible run report JSON to this path"),
 ):
     """Run the full 4-LLM workflow (architect -> implementer -> reviewer -> validator)."""
     settings = _load_settings(workspace)
+    _configure_tracing(settings)
+    runtime = RuntimeContext(workspace=settings.workspace)
     routing = ChatModelFactory(settings).describe_routing()
 
     if model_dump or dry_run:
-        console.print_json(json.dumps({"workspace": str(settings.workspace), "routing": routing}))
+        console.print_json(
+            json.dumps(
+                {
+                    "workspace": str(settings.workspace),
+                    "routing": routing,
+                    "request_id": runtime.request_id,
+                    "run_id": runtime.run_id,
+                    "tracing_enabled": settings.tracing_enabled,
+                }
+            )
+        )
 
     if dry_run:
         raise typer.Exit(0)
 
-    agent = SeniorCppAgent(settings)
+    agent = SeniorCppAgent(settings, runtime=runtime)
     result = agent.run(task, profile=profile)
+    report_payload = agent.create_run_report(result)
 
     payload = {
-        "architect_plan": result.architect_plan,
-        "implementation_log": result.implementation_log,
-        "review_report": result.review_report,
-        "validation_report": result.validation_report,
-        "validation_result": {
-            "passed": result.validation_result.passed,
-            "failed_checks": result.validation_result.failed_checks,
-            "recommendations": result.validation_result.recommendations,
-        },
-        "pipeline_result": result.pipeline_result.to_dict(),
-        "gate": {
-            "merge_ready": result.gate_result.merge_ready,
-            "reasons": result.gate_result.reasons,
-        },
-        "repair_cycles_used": result.repair_cycles_used,
+        **report_payload,
+        "validation_result": report_payload["validation_result"],
+        "pipeline_result": report_payload["pipeline_result"],
+        "gate": report_payload["gate"],
+        "repair_cycles_used": report_payload["repair_cycles_used"],
     }
+
+    if run_report is not None:
+        run_report.parent.mkdir(parents=True, exist_ok=True)
+        run_report.write_text(json.dumps(report_payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
     if output_json:
         console.print_json(json.dumps(payload))
@@ -87,6 +107,9 @@ def run(
     gate_body = [
         f"merge_ready: {result.gate_result.merge_ready}",
         f"repair_cycles_used: {result.repair_cycles_used}",
+        f"request_id: {result.request_id}",
+        f"run_id: {result.run_id}",
+        f"run_dir: {result.run_dir}",
     ]
     if result.gate_result.reasons:
         gate_body.append("reasons:")

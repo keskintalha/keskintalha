@@ -52,6 +52,8 @@ class AgentSettings:
     openai_api_key: str | None = None
     openai_base_url: str | None = None
     cpp_profiles: dict[str, CppProfile] = field(default_factory=lambda: dict(DEFAULT_CPP_PROFILES))
+    tracing_enabled: bool = False
+    tracing_project: str | None = None
 
     def __post_init__(self) -> None:
         self.workspace = self.workspace.expanduser().resolve()
