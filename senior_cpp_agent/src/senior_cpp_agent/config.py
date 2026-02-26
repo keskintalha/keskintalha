@@ -46,6 +46,7 @@ class AgentSettings:
     role_routing: dict[str, RoleRouting] = field(default_factory=dict)
     command_timeout_sec: int = 120
     llm_retry_attempts: int = 2
+    max_repair_cycles: int = 0
     openai_api_key: str | None = None
     openai_base_url: str | None = None
 
@@ -57,6 +58,8 @@ class AgentSettings:
             raise ValueError("command_timeout_sec must be between 1 and 900")
         if not (0 <= self.llm_retry_attempts <= 5):
             raise ValueError("llm_retry_attempts must be between 0 and 5")
+        if not (0 <= self.max_repair_cycles <= 10):
+            raise ValueError("max_repair_cycles must be between 0 and 10")
 
         if not self.role_routing:
             self.role_routing = default_role_routing()
