@@ -32,3 +32,11 @@ def test_agent_settings_requires_provider_api_key(tmp_path: Path):
 def test_agent_settings_accepts_valid_provider_env(tmp_path: Path):
     settings = AgentSettings(workspace=tmp_path, openai_api_key="test-key")
     assert settings.role_routing["implementer"].primary.model
+
+
+def test_agent_settings_max_repair_cycles_range(tmp_path: Path):
+    with pytest.raises(ValueError, match="max_repair_cycles"):
+        AgentSettings(workspace=tmp_path, openai_api_key="test-key", max_repair_cycles=11)
+
+    settings = AgentSettings(workspace=tmp_path, openai_api_key="test-key", max_repair_cycles=2)
+    assert settings.max_repair_cycles == 2

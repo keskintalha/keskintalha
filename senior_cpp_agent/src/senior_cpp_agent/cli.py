@@ -26,6 +26,7 @@ def _load_settings(workspace: Path) -> AgentSettings:
         role_routing=parse_role_routing_from_env(default_timeout_sec=default_timeout),
         command_timeout_sec=int(os.getenv("COMMAND_TIMEOUT_SEC", "120")),
         llm_retry_attempts=int(os.getenv("LLM_RETRY_ATTEMPTS", "2")),
+        max_repair_cycles=int(os.getenv("MAX_REPAIR_CYCLES", "0")),
         openai_api_key=os.getenv("OPENAI_API_KEY"),
         openai_base_url=os.getenv("OPENAI_BASE_URL"),
     )
@@ -57,6 +58,16 @@ def run(
         "implementation_log": result.implementation_log,
         "review_report": result.review_report,
         "validation_report": result.validation_report,
+        "validation_result": {
+            "passed": result.validation_result.passed,
+            "failed_checks": result.validation_result.failed_checks,
+            "recommendations": result.validation_result.recommendations,
+        },
+        "gate": {
+            "merge_ready": result.gate_result.merge_ready,
+            "reasons": result.gate_result.reasons,
+        },
+        "repair_cycles_used": result.repair_cycles_used,
     }
 
     if output_json:
@@ -67,6 +78,16 @@ def run(
     console.print(Panel(result.implementation_log, title="2) Implementation", border_style="green"))
     console.print(Panel(result.review_report, title="3) Review", border_style="yellow"))
     console.print(Panel(result.validation_report, title="4) Validation", border_style="magenta"))
+
+    gate_title = "5) Gate Status"
+    gate_body = [
+        f"merge_ready: {result.gate_result.merge_ready}",
+        f"repair_cycles_used: {result.repair_cycles_used}",
+    ]
+    if result.gate_result.reasons:
+        gate_body.append("reasons:")
+        gate_body.extend(f"- {reason}" for reason in result.gate_result.reasons)
+    console.print(Panel("\n".join(gate_body), title=gate_title, border_style="red" if not result.gate_result.merge_ready else "blue"))
 
 
 @app.command("policy")
