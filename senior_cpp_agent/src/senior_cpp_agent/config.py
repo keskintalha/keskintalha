@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+
+from .cpp_pipeline import CppProfile, DEFAULT_CPP_PROFILES
 from pathlib import Path
 
 ROLES = ("architect", "implementer", "reviewer", "validator")
@@ -49,6 +51,7 @@ class AgentSettings:
     max_repair_cycles: int = 0
     openai_api_key: str | None = None
     openai_base_url: str | None = None
+    cpp_profiles: dict[str, CppProfile] = field(default_factory=lambda: dict(DEFAULT_CPP_PROFILES))
 
     def __post_init__(self) -> None:
         self.workspace = self.workspace.expanduser().resolve()
@@ -60,6 +63,9 @@ class AgentSettings:
             raise ValueError("llm_retry_attempts must be between 0 and 5")
         if not (0 <= self.max_repair_cycles <= 10):
             raise ValueError("max_repair_cycles must be between 0 and 10")
+
+        if not self.cpp_profiles:
+            raise ValueError("cpp_profiles must define at least one profile")
 
         if not self.role_routing:
             self.role_routing = default_role_routing()

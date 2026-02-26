@@ -7,6 +7,7 @@ from textwrap import dedent
 from langchain_core.messages import HumanMessage
 
 from .config import AgentSettings
+from .cpp_pipeline import CppPipeline, CppPipelineResult
 from .llm_registry import ChatModelFactory
 from .tools import build_tools
 
@@ -33,6 +34,7 @@ class AgentResult:
     validation_result: ValidationResult
     gate_result: GateResult
     repair_cycles_used: int
+    pipeline_result: CppPipelineResult
 
 
 ROLE_PROMPTS = {
@@ -79,6 +81,7 @@ class SeniorCppAgent:
         self.settings = settings
         self.tools = build_tools(settings.workspace, settings.command_timeout_sec)
         self.model_factory = ChatModelFactory(settings)
+        self.pipeline = CppPipeline(settings.workspace, settings.command_timeout_sec, profiles=settings.cpp_profiles)
 
     def _invoke_role(self, role: str, user_input: str) -> str:
         output = self.model_factory.invoke_role(
@@ -128,7 +131,7 @@ class SeniorCppAgent:
 
         return GateResult(merge_ready=not reasons, reasons=reasons)
 
-    def _run_reviewer_and_validator(self, task: str, architect_plan: str, implementation_log: str) -> tuple[str, str, ValidationResult]:
+    def _run_reviewer_and_validator(self, task: str, architect_plan: str, implementation_log: str, pipeline_result: CppPipelineResult) -> tuple[str, str, ValidationResult]:
         reviewer_input = (
             "Review the implemented changes. Use tools to inspect edited files if needed.\n\n"
             f"Task: {task}\n\nPlan:\n{architect_plan}\n\nImplementation summary:\n{implementation_log}"
@@ -138,14 +141,28 @@ class SeniorCppAgent:
         validator_input = (
             "Validate the final result and run relevant checks with tools.\n\n"
             f"Task: {task}\n\nPlan:\n{architect_plan}\n\nImplementation:\n{implementation_log}\n\n"
-            f"Review:\n{review_report}"
+            f"Review:\n{review_report}\n\n"
+            "Use these real C++ pipeline results as primary evidence:\n"
+            f"{json.dumps(pipeline_result.to_dict(), indent=2)}"
         )
         validation_report = self._invoke_role("validator", validator_input)
         validation_result = self._parse_validation_result(validation_report)
 
+        if not pipeline_result.passed:
+            failed_step_names = [step.name for step in pipeline_result.steps if step.status != "passed"]
+            pipeline_checks = [f"pipeline step failed: {name}" for name in failed_step_names]
+            failed_checks = list(dict.fromkeys([*validation_result.failed_checks, *pipeline_checks]))
+            recommendations = list(validation_result.recommendations)
+            recommendations.append("Fix failing C++ pipeline steps before merge.")
+            validation_result = ValidationResult(
+                passed=False,
+                failed_checks=failed_checks,
+                recommendations=list(dict.fromkeys(recommendations)),
+            )
+
         return review_report, validation_report, validation_result
 
-    def run(self, task: str) -> AgentResult:
+    def run(self, task: str, profile: str = "debug") -> AgentResult:
         architect_plan = self._invoke_role("architect", task)
 
         implementer_input = (
@@ -154,10 +171,13 @@ class SeniorCppAgent:
         )
         implementation_log = self._invoke_role("implementer", implementer_input)
 
+        pipeline_result = self.pipeline.run(profile)
+
         review_report, validation_report, validation_result = self._run_reviewer_and_validator(
             task=task,
             architect_plan=architect_plan,
             implementation_log=implementation_log,
+            pipeline_result=pipeline_result,
         )
 
         repair_cycles_used = 0
@@ -174,10 +194,12 @@ class SeniorCppAgent:
                 + "\n- ".join(validation_result.recommendations or ["(none provided)"])
             )
             implementation_log = self._invoke_role("implementer", repair_input)
+            pipeline_result = self.pipeline.run(profile)
             review_report, validation_report, validation_result = self._run_reviewer_and_validator(
                 task=task,
                 architect_plan=architect_plan,
                 implementation_log=implementation_log,
+                pipeline_result=pipeline_result,
             )
 
         gate_result = self._evaluate_gate(validation_result)
@@ -190,4 +212,5 @@ class SeniorCppAgent:
             validation_result=validation_result,
             gate_result=gate_result,
             repair_cycles_used=repair_cycles_used,
+            pipeline_result=pipeline_result,
         )

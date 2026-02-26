@@ -37,10 +37,24 @@ class StubInvoker:
         return queue.pop(0)
 
 
+class StubPipeline:
+    def __init__(self):
+        self.calls: list[str] = []
+
+    def run(self, profile: str):
+        self.calls.append(profile)
+        return SimpleNamespace(
+            passed=True,
+            steps=[SimpleNamespace(name="configure", status="passed")],
+            to_dict=lambda: {"profile": profile, "passed": True, "steps": []},
+        )
+
+
 def _make_agent(max_repair_cycles: int, invoker: StubInvoker) -> SeniorCppAgent:
     agent = SeniorCppAgent.__new__(SeniorCppAgent)
     agent.settings = SimpleNamespace(max_repair_cycles=max_repair_cycles)
     agent._invoke_role = invoker
+    agent.pipeline = StubPipeline()
     return agent
 
 
@@ -108,3 +122,19 @@ def test_orchestrator_repair_cycle_until_pass():
     assert len(implementer_prompts) == 2
     assert "Failed checks" in implementer_prompts[1]
     assert "fix failing test" in implementer_prompts[1]
+
+
+def test_orchestrator_uses_selected_pipeline_profile():
+    invoker = StubInvoker(
+        {
+            "architect": ["plan"],
+            "implementer": ["implementation"],
+            "reviewer": ["review"],
+            "validator": ['{"passed": true, "failed_checks": [], "recommendations": []}'],
+        }
+    )
+    agent = _make_agent(max_repair_cycles=0, invoker=invoker)
+
+    agent.run("task", profile="asan")
+
+    assert agent.pipeline.calls == ["asan"]
