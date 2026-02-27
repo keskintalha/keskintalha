@@ -2,6 +2,26 @@
 
 Dieses Projekt liefert einen **professionellen Multi-LLM Agenten** für C++-Entwicklung mit LangChain.
 
+## CI- und Quality-Standards (verbindlich)
+
+Alle Pull Requests müssen folgende Gates bestehen:
+
+- Lint: `ruff check .`
+- Type-Checks: `mypy src`
+- Tests: `pytest --cov=src --cov-report=term-missing`
+- Packaging: `python -m build` + `twine check dist/*`
+- Dependency-Scan: `pip-audit --strict`
+- Secret-Scanning: `gitleaks`
+- Dependency-Review (GitHub Action auf PRs)
+
+Die Workflows liegen unter `.github/workflows/`.
+
+## Release-Strategie
+
+- **Versionierung:** Semantic Versioning (SemVer)
+- **Changelog:** `CHANGELOG.md` nach Keep-a-Changelog-Struktur
+- **Release Notes:** Werden aus dem Changelog und PR-Zusammenfassungen abgeleitet
+
 ## Erfüllt deine 4 Anforderungen
 
 1. **LangChain als Framework** (aktuelle Paketlinien über `>=` Versionen).

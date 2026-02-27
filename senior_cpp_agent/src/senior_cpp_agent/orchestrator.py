@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from textwrap import dedent
+from typing import Any, cast
 
 from langchain_core.messages import HumanMessage
 
@@ -103,7 +104,7 @@ class SeniorCppAgent:
         self.runtime.recorder.write_text(f"{role}_decision.txt", str(content))
         self.runtime.add_decision(stage=role, decision=str(content)[:300], success=True)
         self.log.info("Role completed", extra={"event": "role_complete", "role": role})
-        return content
+        return str(content)
 
     def _parse_validation_result(self, validator_output: str) -> ValidationResult:
         try:
@@ -175,8 +176,8 @@ class SeniorCppAgent:
 
         return review_report, validation_report, validation_result
 
-    def create_run_report(self, result: AgentResult) -> dict:
-        return sanitize_payload(
+    def create_run_report(self, result: AgentResult) -> dict[str, Any]:
+        return cast(dict[str, Any], sanitize_payload(
             {
                 "request_id": result.request_id,
                 "run_id": result.run_id,
@@ -198,7 +199,7 @@ class SeniorCppAgent:
                 "repair_cycles_used": result.repair_cycles_used,
                 "metrics": result.metrics,
             }
-        )
+        ))
 
     def run(self, task: str, profile: str = "debug") -> AgentResult:
         self.log.info("Starting run", extra={"event": "run_start", "profile": profile})
