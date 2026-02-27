@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from langchain_core.messages import BaseMessage
 
+from pydantic import SecretStr
+
 from .config import AgentSettings, ModelRoute
 from .runtime import RuntimeContext, role_output_to_artifact
 
@@ -26,11 +28,12 @@ class ChatModelFactory:
         if route.provider == "openai":
             from langchain_openai import ChatOpenAI
 
+            api_key = SecretStr(self.settings.openai_api_key) if self.settings.openai_api_key else None
             return ChatOpenAI(
                 model=route.model,
                 temperature=route.temperature,
                 timeout=route.timeout_sec,
-                api_key=self.settings.openai_api_key,
+                api_key=api_key,
                 base_url=self.settings.openai_base_url,
                 max_retries=0,
             )
